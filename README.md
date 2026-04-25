@@ -1,23 +1,50 @@
-# TensorRT-LLM MoE KV Scheduler
+<h1 align="center">TensorRT-LLM MoE KV Scheduler</h1>
 
-[![TensorRT-LLM](https://img.shields.io/badge/NVIDIA%20TensorRT--LLM-runtime%20patch-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://github.com/NVIDIA/TensorRT-LLM)
-[![CUDA C++](https://img.shields.io/badge/CUDA%20C%2B%2B-runtime-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-toolkit)
-[![Python](https://img.shields.io/badge/Python-benchmarking-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
-[![MoE](https://img.shields.io/badge/MoE-KV%20scheduling-2563EB?style=flat-square)](#)
-[![Benchmark](https://img.shields.io/badge/benchmark-live%20TensorRT--LLM-16A34A?style=flat-square)](results/moe_kv_scheduling_live/compare_tables/live_summary.md)
-[![License](https://img.shields.io/github/license/LongWeihan/trtllm-moe-kv-scheduler?style=flat-square)](LICENSE)
+<p align="center">
+  <strong>MoE-aware KV-pressure scheduling for the TensorRT-LLM C++ runtime.</strong>
+</p>
 
-Default-off runtime scheduling patch for TensorRT-LLM MoE inference. The project adds a cache-utility signal to guide request admission and reusable-prefix KV retention under paged KV cache pressure.
+<p align="center">
+  <a href="https://github.com/NVIDIA/TensorRT-LLM"><img alt="TensorRT-LLM" src="https://img.shields.io/badge/NVIDIA%20TensorRT--LLM-runtime%20patch-76B900?style=flat-square&logo=nvidia&logoColor=white"></a>
+  <a href="https://developer.nvidia.com/cuda-toolkit"><img alt="CUDA C++" src="https://img.shields.io/badge/CUDA%20C%2B%2B-runtime-76B900?style=flat-square&logo=nvidia&logoColor=white"></a>
+  <a href="https://www.python.org/"><img alt="Python" src="https://img.shields.io/badge/Python-benchmarking-3776AB?style=flat-square&logo=python&logoColor=white"></a>
+  <img alt="MoE" src="https://img.shields.io/badge/MoE-KV%20scheduling-2563EB?style=flat-square">
+  <a href="results/moe_kv_scheduling_live/compare_tables/live_summary.md"><img alt="Benchmark" src="https://img.shields.io/badge/benchmark-live%20TensorRT--LLM-16A34A?style=flat-square"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/LongWeihan/trtllm-moe-kv-scheduler?style=flat-square"></a>
+</p>
 
-This is not an inference server, not a MoE kernel rewrite, and not a replacement for TensorRT-LLM. It is a focused performance-engineering patch for the TensorRT-LLM C++ runtime path.
+<p align="center">
+  <strong>Best measured result:</strong> <code>mixed_burst + admission_only</code> improves <strong>TPOT p90 by 4.48%</strong> and <strong>throughput by 3.40%</strong> on a live TensorRT-LLM MoE engine.
+</p>
 
-## Overview
+---
 
-TensorRT-LLM already provides a highly optimized inference stack. The remaining opportunity explored here is request-level resource allocation under KV cache pressure.
+## What This Project Does
 
-In MoE serving, not all cached prefixes have the same value. A long, low-reuse prompt can occupy many KV blocks and evict a shared prefix that will be reused by later requests. Recomputing that prefix can also re-trigger expensive MoE prefill work. A generic admission order does not know this difference before allocating scarce KV blocks.
+This repository provides a default-off TensorRT-LLM runtime patch for MoE inference. It adds a cache-utility signal to guide two decisions under paged KV cache pressure:
 
-This project introduces a request cache-utility score:
+| Runtime decision | What changes |
+| --- | --- |
+| Request admission | Prefer high-reuse, high-recompute-cost requests before low-reuse cache-polluting prompts. |
+| Prefix retention | Raise retention priority for reusable prefix KV blocks through TensorRT-LLM's existing `KvCacheRetentionConfig`. |
+
+It does **not** replace TensorRT-LLM, implement a new serving engine, or rewrite MoE kernels. The project is a focused performance-engineering patch inside the TensorRT-LLM C++ batch manager and KV cache path.
+
+## Result Snapshot
+
+Validated with a TensorRT-LLM INT4 weight-only engine for `Qwen/Qwen1.5-MoE-A2.7B-Chat`.
+
+| Workload | Mode | TTFT p90 | TPOT p90 | E2E p90 | Throughput |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `mixed_burst` | `admission_only` | **-3.42%** | **-4.48%** | **-2.39%** | **+3.40%** |
+
+The improvement is workload-sensitive. It appears on a mixed high-reuse / low-reuse KV-pressure workload, not as a universal TensorRT-LLM speedup. Full raw values and deltas are published in [live_summary.md](results/moe_kv_scheduling_live/compare_tables/live_summary.md).
+
+## Why KV Scheduling Matters for MoE
+
+In MoE serving, cached prefixes do not all have the same value. A long prompt with little future reuse can occupy many KV blocks and evict a shared prefix that will be reused by later requests. Recomputing that prefix can also re-trigger expensive MoE prefill work.
+
+The patch estimates request cache value before scarce KV blocks are allocated:
 
 ```text
 cache_utility =
@@ -27,38 +54,30 @@ cache_utility =
   - cache_pollution_cost
 ```
 
-When KV usage crosses a configured high watermark, the scheduler can prefer high-utility shared-prefix requests and defer low-utility cache-polluting prompts. The same score is also used to synthesize TensorRT-LLM `KvCacheRetentionConfig` for reusable prefix ranges.
-
-## Highlights
-
-| Capability | Status |
-| --- | --- |
-| TensorRT-LLM C++ runtime patch | Implemented |
-| KV-pressure-gated request admission | Implemented |
-| Score-aware reusable-prefix retention | Implemented |
-| Qwen1.5-MoE INT4 live benchmark | Completed |
-| Runtime router telemetry | Future production extension |
-| Direct allocator rewrite | Not required for this prototype |
+When KV usage crosses a configured high watermark, the scheduler can defer low-utility first-context requests and admit higher-utility shared-prefix requests first.
 
 ## Architecture
 
 ```mermaid
-flowchart LR
-    A[Workload or router metadata] --> B[MoE/KV request hint]
-    B --> C[TensorRT-LLM executor request]
-    C --> D[LlmRequest]
-    D --> E[Cache utility score]
-    F[Runtime KV pressure] --> E
-    E --> G[Admission policy]
-    E --> H[Prefix retention policy]
-    G --> I[CapacityScheduler]
-    H --> J[KVCacheManager]
-    I --> K[Batch execution]
-    J --> K
-    K --> L[TTFT / TPOT / E2E / throughput]
+flowchart TB
+    A["Request metadata<br/>pressure / reuse / prefix"]
+    B["Packed MoE-KV hint<br/>benchmark prototype"]
+    C["LlmRequest<br/>TensorRT-LLM runtime"]
+    D["Cache utility score<br/>reuse + recompute + pressure - pollution"]
+    E{"KV pressure<br/>above watermark?"}
+    F["Admission policy<br/>defer low-utility prefill"]
+    G["Retention policy<br/>protect reusable prefix"]
+    H["TensorRT-LLM runtime<br/>CapacityScheduler + KVCacheManager"]
+    I["Live metrics<br/>TTFT / TPOT / E2E / throughput"]
+
+    A --> B --> C --> D --> E
+    E -->|yes| F --> H
+    E -->|yes| G --> H
+    E -->|no| H
+    H --> I
 ```
 
-The current benchmark path carries metadata through a compact packed hint. A production integration should replace this with a first-class request metadata channel from the serving router, gate estimator, or runtime telemetry layer.
+The current benchmark path carries metadata through a compact packed hint. A production integration should use a first-class request metadata channel from the serving router, gate estimator, or runtime telemetry layer.
 
 ## Patch Surface
 
@@ -70,13 +89,13 @@ The current benchmark path carries metadata through a compact packed hint. A pro
 | Admission scheduling | `cpp/tensorrt_llm/batch_manager/capacityScheduler.cpp` | Defer low-utility first-context requests under KV pressure when better candidates are waiting. |
 | Prefix retention | `cpp/tensorrt_llm/batch_manager/kvCacheManager.cpp` | Use cache utility to generate retention priority for reusable prefix ranges. |
 
-The main patch is:
+Main runtime patch:
 
 ```text
 trtllm_patch/0001-moe-aware-kv-scheduling.patch
 ```
 
-An optional local build patch is also included:
+Optional local build patch:
 
 ```text
 trtllm_patch/0000-local-build-fixes.patch
@@ -84,23 +103,21 @@ trtllm_patch/0000-local-build-fixes.patch
 
 The build patch records workspace-specific CMake/Conan fixes and is not part of the scheduling method.
 
-## Benchmark Pipeline
+## Benchmark Workloads
 
 ```mermaid
 flowchart TB
-    A[Generate MoE/KV pressure workloads] --> B[Run patched gptManagerBenchmark]
-    B --> C[baseline_disabled]
-    B --> D[admission_only]
-    B --> E[retention_only]
-    B --> F[combined]
-    C --> G[CSV metrics]
+    A["Generate MoE-KV workloads"] --> B["Run patched gptManagerBenchmark"]
+    B --> C["baseline_disabled"]
+    B --> D["admission_only"]
+    B --> E["retention_only"]
+    B --> F["combined"]
+    C --> G["CSV metrics"]
     D --> G
     E --> G
     F --> G
-    G --> H[Summary tables]
+    G --> H["summary.md / summary.json"]
 ```
-
-The benchmark uses four synthetic but structured workloads:
 
 | Workload | Purpose |
 | --- | --- |
@@ -109,26 +126,20 @@ The benchmark uses four synthetic but structured workloads:
 | `mixed_burst` | Low-reuse prompts arrive before high-reuse shared-prefix requests. This is the target pressure scenario. |
 | `low_reuse_pollution` | Long unique prompts with low reuse. Tests whether the policy over-protects bad cache residents. |
 
-## Results
-
-Validated with a TensorRT-LLM INT4 weight-only engine for `Qwen/Qwen1.5-MoE-A2.7B-Chat`.
+## Benchmark Results
 
 | Item | Value |
 | --- | --- |
 | GPU | NVIDIA GeForce RTX 4060 Ti, 16 GB |
+| Model | `Qwen/Qwen1.5-MoE-A2.7B-Chat` |
+| Engine | TensorRT-LLM INT4 weight-only |
 | Runtime | TensorRT-LLM C++ `gptManagerBenchmark` |
 | Scheduling policy | `max_utilization` |
 | Samples | 64 per workload and mode |
 | Concurrency | 4 |
 | Baseline | Same patched binary with MoE KV scheduling disabled |
 
-Headline result:
-
-| Workload | Best mode | TTFT p90 | TPOT p90 | E2E p90 | Throughput |
-| --- | --- | ---: | ---: | ---: | ---: |
-| `mixed_burst` | `admission_only` | **-3.42%** | **-4.48%** | **-2.39%** | **+3.40%** |
-
-Full delta table:
+Latency deltas are lower-is-better. Throughput deltas are higher-is-better.
 
 | Workload | Mode | TTFT p90 | TPOT p90 | E2E p90 | Throughput |
 | --- | --- | ---: | ---: | ---: | ---: |
@@ -144,21 +155,6 @@ Full delta table:
 | `low_reuse_pollution` | `admission_only` | +0.46% | +0.79% | -0.31% | -0.34% |
 | `low_reuse_pollution` | `retention_only` | -1.04% | -1.03% | -2.30% | -0.88% |
 | `low_reuse_pollution` | `combined` | +2.15% | +0.39% | +3.91% | -1.84% |
-
-Raw values are published in:
-
-```text
-results/moe_kv_scheduling_live/compare_tables/live_summary.md
-results/moe_kv_scheduling_live/compare_tables/live_summary.json
-```
-
-## Interpretation
-
-The strongest result appears on `mixed_burst` with admission-only scheduling. That is the workload where the policy has a meaningful choice: low-reuse prompts arrive first and can consume KV capacity before high-reuse shared-prefix requests enter the batch.
-
-The policy is workload-sensitive. It is not presented as a universal TensorRT-LLM speedup. Balanced workloads and repeated-prefix workloads are mostly neutral or slightly worse because the policy either has little discrimination signal or adds scheduling overhead without preventing harmful KV allocation.
-
-This is why the policy is default-off and pressure-gated.
 
 ## Quick Start
 
