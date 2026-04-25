@@ -1,25 +1,298 @@
 {
-  "status": "partial",
+  "status": "complete",
   "source": "live TensorRT-LLM patched binary with policy toggled by environment variables",
   "baseline_definition": "same patched binary with MoE KV scheduling env vars disabled",
-  "rows": [],
-  "deltas": [],
-  "missing": [
-    "results\\moe_kv_scheduling_live\\baseline_disabled\\balanced_control.csv",
-    "results\\moe_kv_scheduling_live\\admission_only\\balanced_control.csv",
-    "results\\moe_kv_scheduling_live\\retention_only\\balanced_control.csv",
-    "results\\moe_kv_scheduling_live\\combined\\balanced_control.csv",
-    "results\\moe_kv_scheduling_live\\baseline_disabled\\repeated_prefix_hot_pressure.csv",
-    "results\\moe_kv_scheduling_live\\admission_only\\repeated_prefix_hot_pressure.csv",
-    "results\\moe_kv_scheduling_live\\retention_only\\repeated_prefix_hot_pressure.csv",
-    "results\\moe_kv_scheduling_live\\combined\\repeated_prefix_hot_pressure.csv",
-    "results\\moe_kv_scheduling_live\\baseline_disabled\\mixed_burst.csv",
-    "results\\moe_kv_scheduling_live\\admission_only\\mixed_burst.csv",
-    "results\\moe_kv_scheduling_live\\retention_only\\mixed_burst.csv",
-    "results\\moe_kv_scheduling_live\\combined\\mixed_burst.csv",
-    "results\\moe_kv_scheduling_live\\baseline_disabled\\low_reuse_pollution.csv",
-    "results\\moe_kv_scheduling_live\\admission_only\\low_reuse_pollution.csv",
-    "results\\moe_kv_scheduling_live\\retention_only\\low_reuse_pollution.csv",
-    "results\\moe_kv_scheduling_live\\combined\\low_reuse_pollution.csv"
-  ]
+  "rows": [
+    {
+      "workload": "balanced_control",
+      "mode": "baseline_disabled",
+      "num_samples": 64.0,
+      "num_error_samples": 0.0,
+      "total_latency_ms": 46536.5,
+      "ttft_p90_ms": 1509.21,
+      "tpot_p90_ms": 14.9906,
+      "e2e_p90_ms": 2922.15,
+      "throughput_tok_s": 132.025,
+      "seq_throughput_s": 1.37526
+    },
+    {
+      "workload": "balanced_control",
+      "mode": "admission_only",
+      "num_samples": 64.0,
+      "num_error_samples": 0.0,
+      "total_latency_ms": 46730.0,
+      "ttft_p90_ms": 1526.76,
+      "tpot_p90_ms": 15.1731,
+      "e2e_p90_ms": 2947.27,
+      "throughput_tok_s": 131.479,
+      "seq_throughput_s": 1.36957
+    },
+    {
+      "workload": "balanced_control",
+      "mode": "retention_only",
+      "num_samples": 64.0,
+      "num_error_samples": 0.0,
+      "total_latency_ms": 46622.9,
+      "ttft_p90_ms": 1525.49,
+      "tpot_p90_ms": 15.1316,
+      "e2e_p90_ms": 2942.91,
+      "throughput_tok_s": 131.781,
+      "seq_throughput_s": 1.37272
+    },
+    {
+      "workload": "balanced_control",
+      "mode": "combined",
+      "num_samples": 64.0,
+      "num_error_samples": 0.0,
+      "total_latency_ms": 48612.1,
+      "ttft_p90_ms": 1622.01,
+      "tpot_p90_ms": 16.1697,
+      "e2e_p90_ms": 3060.3,
+      "throughput_tok_s": 126.388,
+      "seq_throughput_s": 1.31655
+    },
+    {
+      "workload": "repeated_prefix_hot_pressure",
+      "mode": "baseline_disabled",
+      "num_samples": 64.0,
+      "num_error_samples": 0.0,
+      "total_latency_ms": 66332.4,
+      "ttft_p90_ms": 3176.58,
+      "tpot_p90_ms": 21.5997,
+      "e2e_p90_ms": 4153.17,
+      "throughput_tok_s": 92.6245,
+      "seq_throughput_s": 0.964838
+    },
+    {
+      "workload": "repeated_prefix_hot_pressure",
+      "mode": "admission_only",
+      "num_samples": 64.0,
+      "num_error_samples": 0.0,
+      "total_latency_ms": 66963.1,
+      "ttft_p90_ms": 3205.66,
+      "tpot_p90_ms": 22.0389,
+      "e2e_p90_ms": 4254.15,
+      "throughput_tok_s": 91.752,
+      "seq_throughput_s": 0.95575
+    },
+    {
+      "workload": "repeated_prefix_hot_pressure",
+      "mode": "retention_only",
+      "num_samples": 64.0,
+      "num_error_samples": 0.0,
+      "total_latency_ms": 66262.0,
+      "ttft_p90_ms": 3177.16,
+      "tpot_p90_ms": 21.74,
+      "e2e_p90_ms": 4204.76,
+      "throughput_tok_s": 92.7229,
+      "seq_throughput_s": 0.965863
+    },
+    {
+      "workload": "repeated_prefix_hot_pressure",
+      "mode": "combined",
+      "num_samples": 64.0,
+      "num_error_samples": 0.0,
+      "total_latency_ms": 66831.5,
+      "ttft_p90_ms": 3175.89,
+      "tpot_p90_ms": 21.8852,
+      "e2e_p90_ms": 4195.23,
+      "throughput_tok_s": 91.9327,
+      "seq_throughput_s": 0.957633
+    },
+    {
+      "workload": "mixed_burst",
+      "mode": "baseline_disabled",
+      "num_samples": 64.0,
+      "num_error_samples": 0.0,
+      "total_latency_ms": 66481.4,
+      "ttft_p90_ms": 3182.01,
+      "tpot_p90_ms": 21.63,
+      "e2e_p90_ms": 4223.54,
+      "throughput_tok_s": 92.4169,
+      "seq_throughput_s": 0.962676
+    },
+    {
+      "workload": "mixed_burst",
+      "mode": "admission_only",
+      "num_samples": 64.0,
+      "num_error_samples": 0.0,
+      "total_latency_ms": 64293.4,
+      "ttft_p90_ms": 3073.34,
+      "tpot_p90_ms": 20.6613,
+      "e2e_p90_ms": 4122.78,
+      "throughput_tok_s": 95.5619,
+      "seq_throughput_s": 0.995436
+    },
+    {
+      "workload": "mixed_burst",
+      "mode": "retention_only",
+      "num_samples": 64.0,
+      "num_error_samples": 0.0,
+      "total_latency_ms": 66158.5,
+      "ttft_p90_ms": 3185.7,
+      "tpot_p90_ms": 21.3269,
+      "e2e_p90_ms": 4320.21,
+      "throughput_tok_s": 92.8679,
+      "seq_throughput_s": 0.967374
+    },
+    {
+      "workload": "mixed_burst",
+      "mode": "combined",
+      "num_samples": 64.0,
+      "num_error_samples": 0.0,
+      "total_latency_ms": 65224.1,
+      "ttft_p90_ms": 3086.67,
+      "tpot_p90_ms": 20.8653,
+      "e2e_p90_ms": 4207.62,
+      "throughput_tok_s": 94.1983,
+      "seq_throughput_s": 0.981232
+    },
+    {
+      "workload": "low_reuse_pollution",
+      "mode": "baseline_disabled",
+      "num_samples": 64.0,
+      "num_error_samples": 0.0,
+      "total_latency_ms": 65336.1,
+      "ttft_p90_ms": 3106.89,
+      "tpot_p90_ms": 20.9948,
+      "e2e_p90_ms": 4169.84,
+      "throughput_tok_s": 94.0368,
+      "seq_throughput_s": 0.97955
+    },
+    {
+      "workload": "low_reuse_pollution",
+      "mode": "admission_only",
+      "num_samples": 64.0,
+      "num_error_samples": 0.0,
+      "total_latency_ms": 65556.8,
+      "ttft_p90_ms": 3121.04,
+      "tpot_p90_ms": 21.1609,
+      "e2e_p90_ms": 4156.85,
+      "throughput_tok_s": 93.7202,
+      "seq_throughput_s": 0.976252
+    },
+    {
+      "workload": "low_reuse_pollution",
+      "mode": "retention_only",
+      "num_samples": 64.0,
+      "num_error_samples": 0.0,
+      "total_latency_ms": 65918.7,
+      "ttft_p90_ms": 3074.44,
+      "tpot_p90_ms": 20.7778,
+      "e2e_p90_ms": 4073.95,
+      "throughput_tok_s": 93.2058,
+      "seq_throughput_s": 0.970894
+    },
+    {
+      "workload": "low_reuse_pollution",
+      "mode": "combined",
+      "num_samples": 64.0,
+      "num_error_samples": 0.0,
+      "total_latency_ms": 66562.8,
+      "ttft_p90_ms": 3173.73,
+      "tpot_p90_ms": 21.0768,
+      "e2e_p90_ms": 4332.71,
+      "throughput_tok_s": 92.3038,
+      "seq_throughput_s": 0.961498
+    }
+  ],
+  "deltas": [
+    {
+      "workload": "balanced_control",
+      "mode": "admission_only",
+      "ttft_p90_change_pct": 1.1628600393583368,
+      "tpot_p90_change_pct": 1.2174295892092326,
+      "e2e_p90_change_pct": 0.8596410177437808,
+      "throughput_change_pct": -0.41355803825032555
+    },
+    {
+      "workload": "balanced_control",
+      "mode": "retention_only",
+      "ttft_p90_change_pct": 1.0787100536042018,
+      "tpot_p90_change_pct": 0.9405894360465893,
+      "e2e_p90_change_pct": 0.7104358092500305,
+      "throughput_change_pct": -0.1848134822950197
+    },
+    {
+      "workload": "balanced_control",
+      "mode": "combined",
+      "ttft_p90_change_pct": 7.474108970918556,
+      "tpot_p90_change_pct": 7.865595773351289,
+      "e2e_p90_change_pct": 4.727683383809869,
+      "throughput_change_pct": -4.269645900397652
+    },
+    {
+      "workload": "repeated_prefix_hot_pressure",
+      "mode": "admission_only",
+      "ttft_p90_change_pct": 0.9154499493165583,
+      "tpot_p90_change_pct": 2.0333615744663267,
+      "e2e_p90_change_pct": 2.4313957772015007,
+      "throughput_change_pct": -0.9419753952787895
+    },
+    {
+      "workload": "repeated_prefix_hot_pressure",
+      "mode": "retention_only",
+      "ttft_p90_change_pct": 0.018258630350878217,
+      "tpot_p90_change_pct": 0.6495460585100713,
+      "e2e_p90_change_pct": 1.2421836813807319,
+      "throughput_change_pct": 0.10623539128416137
+    },
+    {
+      "workload": "repeated_prefix_hot_pressure",
+      "mode": "combined",
+      "ttft_p90_change_pct": -0.021721474038118183,
+      "tpot_p90_change_pct": 1.3217776172817335,
+      "e2e_p90_change_pct": 1.0127204039324056,
+      "throughput_change_pct": -0.7468866228697597
+    },
+    {
+      "workload": "mixed_burst",
+      "mode": "admission_only",
+      "ttft_p90_change_pct": -3.4151369731710477,
+      "tpot_p90_change_pct": -4.47850208044382,
+      "e2e_p90_change_pct": -2.385676470448965,
+      "throughput_change_pct": 3.4030572330385414
+    },
+    {
+      "workload": "mixed_burst",
+      "mode": "retention_only",
+      "ttft_p90_change_pct": 0.11596443757246519,
+      "tpot_p90_change_pct": -1.4012944983818798,
+      "e2e_p90_change_pct": 2.288838273107395,
+      "throughput_change_pct": 0.48800598158995556
+    },
+    {
+      "workload": "mixed_burst",
+      "mode": "combined",
+      "ttft_p90_change_pct": -2.9962193707750804,
+      "tpot_p90_change_pct": -3.5353675450762725,
+      "e2e_p90_change_pct": -0.3769349881852681,
+      "throughput_change_pct": 1.9275695246215845
+    },
+    {
+      "workload": "low_reuse_pollution",
+      "mode": "admission_only",
+      "ttft_p90_change_pct": 0.45543936219177666,
+      "tpot_p90_change_pct": 0.7911482843370745,
+      "e2e_p90_change_pct": -0.3115227442779527,
+      "throughput_change_pct": -0.33667670528983756
+    },
+    {
+      "workload": "low_reuse_pollution",
+      "mode": "retention_only",
+      "ttft_p90_change_pct": -1.0444528129415531,
+      "tpot_p90_change_pct": -1.0335892697239426,
+      "e2e_p90_change_pct": -2.2996086180764808,
+      "throughput_change_pct": -0.8836965953754307
+    },
+    {
+      "workload": "low_reuse_pollution",
+      "mode": "combined",
+      "ttft_p90_change_pct": 2.1513474889680726,
+      "tpot_p90_change_pct": 0.39057290376663356,
+      "e2e_p90_change_pct": 3.9059052625520376,
+      "throughput_change_pct": -1.8428955472751136
+    }
+  ],
+  "missing": []
 }
