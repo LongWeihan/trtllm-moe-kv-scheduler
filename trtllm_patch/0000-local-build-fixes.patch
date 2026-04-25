@@ -1,0 +1,50 @@
+diff --git a/cpp/conan.lock b/cpp/conan.lock
+index ee47009..95399f7 100644
+--- a/cpp/conan.lock
++++ b/cpp/conan.lock
+@@ -1,7 +1,7 @@
+ {
+     "version": "0.5",
+     "requires": [
+-        "libnuma/system#65d9e0e45ccc1e477b97d678fa7d56bb%1769137587.8781652"
++        "libnuma/system#83d138893fbe745993548916d27b4dbb%1777118223.0000000"
+     ],
+     "build_requires": [],
+     "python_requires": [],
+diff --git a/cpp/tensorrt_llm/CMakeLists.txt b/cpp/tensorrt_llm/CMakeLists.txt
+index 06aefb3..2d4801d 100644
+--- a/cpp/tensorrt_llm/CMakeLists.txt
++++ b/cpp/tensorrt_llm/CMakeLists.txt
+@@ -227,6 +227,21 @@ if(ENABLE_MULTI_DEVICE)
+   set(TRTLLM_LINK_LIBS ${TRTLLM_LINK_LIBS} ${MPI_C_LIBRARIES} ${NCCL_LIB})
+ endif()
+ 
++if(TORCH_RUNTIME_LIB_DIR)
++  set(TRTLLM_TORCH_RUNTIME_LIBS
++      ${TORCH_RUNTIME_LIB_DIR}/libtorch_python.so
++      ${TORCH_RUNTIME_LIB_DIR}/libtorch.so
++      ${TORCH_RUNTIME_LIB_DIR}/libtorch_cuda.so
++      ${TORCH_RUNTIME_LIB_DIR}/libtorch_cpu.so
++      ${TORCH_RUNTIME_LIB_DIR}/libc10_cuda.so
++      ${TORCH_RUNTIME_LIB_DIR}/libc10.so)
++  foreach(TORCH_RUNTIME_LIB ${TRTLLM_TORCH_RUNTIME_LIBS})
++    if(EXISTS ${TORCH_RUNTIME_LIB})
++      set(TRTLLM_LINK_LIBS ${TRTLLM_LINK_LIBS} ${TORCH_RUNTIME_LIB})
++    endif()
++  endforeach()
++endif()
++
+ if(ENABLE_NVSHMEM)
+   set(TRTLLM_LINK_LIBS ${TRTLLM_LINK_LIBS} nvshmem::nvshmem_host
+                        nvshmem::nvshmem_device)
+@@ -260,6 +275,10 @@ target_link_libraries(
+           $<LINK_LIBRARY:WHOLE_ARCHIVE,fp8_blockscale_gemm_src>
+           $<LINK_LIBRARY:WHOLE_ARCHIVE,${INTERNAL_CUTLASS_KERNELS_TARGET}>)
+ 
++if(TORCH_RUNTIME_LIB_DIR)
++  target_link_libraries(${SHARED_TARGET} PRIVATE ${TRTLLM_TORCH_RUNTIME_LIBS})
++endif()
++
+ # Link kernel_src and cutlass_src. static internal cutlass lib overridden.
+ target_link_libraries(${SHARED_TARGET} PUBLIC kernels_src cutlass_src)
+ 

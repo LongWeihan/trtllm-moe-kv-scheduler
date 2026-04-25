@@ -1,0 +1,534 @@
+diff --git a/benchmarks/cpp/gptManagerBenchmark.cpp b/benchmarks/cpp/gptManagerBenchmark.cpp
+index b4f0948..696732b 100644
+--- a/benchmarks/cpp/gptManagerBenchmark.cpp
++++ b/benchmarks/cpp/gptManagerBenchmark.cpp
+@@ -27,6 +27,7 @@
+ #include "tensorrt_llm/runtime/utils/mpiUtils.h"
+ #include "tensorrt_llm/runtime/utils/numpyUtils.h"
+ #include "tensorrt_llm/runtime/worldConfig.h"
++#include "tensorrt_llm/batch_manager/moeKvSchedulingPolicy.h"
+ #include "utils/utils.h"
+ 
+ #include <chrono>
+@@ -822,6 +823,9 @@ texec::Request makeExecutorRequest(Sample const& sample, SizeType32 const& beamW
+     auto samplingConfig = texec::SamplingConfig{beamWidth};
+     samplingConfig.setTemperature(temperature);
+     auto outputConfig = texec::OutputConfig{false, returnContextLogits, returnGenerationLogits, false};
++    auto const clientId = tensorrt_llm::batch_manager::moe_kv_sched::packHint(
++        tensorrt_llm::batch_manager::moe_kv_sched::Hint{sample.moePressureScore, sample.reuseGroup,
++            sample.sharedPrefixTokens, sample.estimatedKvBlocks, sample.expectedReuseCount, sample.signalSource});
+     return texec::Request(sample.inputIds, sample.outputLen, streaming, samplingConfig, outputConfig, eosId, padId,
+         std::nullopt,    // positionIds
+         std::nullopt,    // badWords
+@@ -838,7 +842,7 @@ texec::Request makeExecutorRequest(Sample const& sample, SizeType32 const& beamW
+         std::nullopt,    // logitsPostProcessorName
+         std::nullopt,    // logitsPostProcessor
+         encoderInputTokenIds.has_value() ? encoderInputTokenIds : std::nullopt,
+-        std::nullopt);   // cacheSaltID
++        clientId);       // benchmark-only MoE KV scheduling metadata
+ }
+ 
+ void benchmarkExecutor(std::optional<std::filesystem::path> const& decoderEngineDir,
+diff --git a/benchmarks/cpp/utils/utils.cpp b/benchmarks/cpp/utils/utils.cpp
+index 0cbcf1c..6266bc5 100644
+--- a/benchmarks/cpp/utils/utils.cpp
++++ b/benchmarks/cpp/utils/utils.cpp
+@@ -20,6 +20,7 @@
+ #include "utils.h"
+ #include "tensorrt_llm/common/config.h"
+ #include "tensorrt_llm/common/logger.h"
++#include <algorithm>
+ #include <random>
+ 
+ #include <filesystem>
+@@ -30,6 +31,53 @@ TRTLLM_NAMESPACE_BEGIN
+ namespace benchmark
+ {
+ 
++namespace
++{
++
++int32_t clampInt(int32_t value, int32_t lo, int32_t hi)
++{
++    return std::max(lo, std::min(value, hi));
++}
++
++int32_t parsePressure(nlohmann::json const& sample)
++{
++    if (sample.count("moe_pressure_score"))
++    {
++        auto const value = sample["moe_pressure_score"].template get<double>();
++        return clampInt(static_cast<int32_t>(value * 1000.0), 0, 1000);
++    }
++    if (sample.count("moe_kv_pressure"))
++    {
++        auto const value = sample["moe_kv_pressure"].template get<double>();
++        return clampInt(static_cast<int32_t>(value * 1000.0), 0, 1000);
++    }
++    return 0;
++}
++
++int32_t parseSignalSource(nlohmann::json const& sample)
++{
++    if (!sample.count("signal_source"))
++    {
++        return 0;
++    }
++    auto const source = sample["signal_source"].template get<std::string>();
++    if (source == "synthetic_hint")
++    {
++        return 1;
++    }
++    if (source == "gate_estimated")
++    {
++        return 2;
++    }
++    if (source == "runtime_router_telemetry")
++    {
++        return 3;
++    }
++    return 0;
++}
++
++} // namespace
++
+ std::vector<std::vector<SizeType32>> parseVectorOfVectors(std::string const& input)
+ {
+     std::vector<std::vector<SizeType32>> result;
+@@ -96,7 +144,12 @@ Samples parseWorkloadJson(
+         {
+             input_ids.resize(maxPromptLen.value());
+         }
+-        samples.emplace_back(Sample{std::move(input_ids), sample["output_len"], taskId});
++        auto const promptLen = static_cast<int32_t>(input_ids.size());
++        auto const defaultKvBlocks = (promptLen + 31) / 32;
++        samples.emplace_back(Sample{std::move(input_ids), sample["output_len"], taskId, parsePressure(sample),
++            sample.value("reuse_group", -1), sample.value("shared_prefix_tokens", 0),
++            sample.value("estimated_kv_blocks", defaultKvBlocks), sample.value("expected_reuse_count", 0),
++            parseSignalSource(sample)});
+     }
+ 
+     if (samples.size() < maxNumSamples)
+diff --git a/benchmarks/cpp/utils/utils.h b/benchmarks/cpp/utils/utils.h
+index fba30fe..135cca6 100644
+--- a/benchmarks/cpp/utils/utils.h
++++ b/benchmarks/cpp/utils/utils.h
+@@ -228,6 +228,12 @@ struct Sample
+     std::vector<int32_t> inputIds;
+     int32_t outputLen;
+     int32_t taskId;
++    int32_t moePressureScore;
++    int32_t reuseGroup;
++    int32_t sharedPrefixTokens;
++    int32_t estimatedKvBlocks;
++    int32_t expectedReuseCount;
++    int32_t signalSource;
+ };
+ 
+ using Samples = std::vector<Sample>;
+diff --git a/cpp/include/tensorrt_llm/batch_manager/llmRequest.h b/cpp/include/tensorrt_llm/batch_manager/llmRequest.h
+index c1ecfff..25b4876 100644
+--- a/cpp/include/tensorrt_llm/batch_manager/llmRequest.h
++++ b/cpp/include/tensorrt_llm/batch_manager/llmRequest.h
+@@ -1852,6 +1852,11 @@ public:
+         return mCacheSaltID;
+     }
+ 
++    [[nodiscard]] std::optional<RequestIdType> getClientId() const noexcept
++    {
++        return mClientId;
++    }
++
+     std::vector<SizeType32> getLanguageAdapterRouting(
+         SizeType32 const reqNumLanguages, SizeType32 const inputLength) const
+     {
+diff --git a/cpp/tensorrt_llm/batch_manager/capacityScheduler.cpp b/cpp/tensorrt_llm/batch_manager/capacityScheduler.cpp
+index be69cce..d258368 100644
+--- a/cpp/tensorrt_llm/batch_manager/capacityScheduler.cpp
++++ b/cpp/tensorrt_llm/batch_manager/capacityScheduler.cpp
+@@ -17,11 +17,15 @@
+ 
+ #include "tensorrt_llm/batch_manager/capacityScheduler.h"
+ #include "tensorrt_llm/batch_manager/kvCacheManager.h"
++#include "tensorrt_llm/batch_manager/moeKvSchedulingPolicy.h"
+ #include "tensorrt_llm/batch_manager/peftCacheManager.h"
+ #include "tensorrt_llm/batch_manager/scheduledBlocksManager.h"
+ #include "tensorrt_llm/common/logger.h"
+ #include "tensorrt_llm/common/nvtxUtils.h"
+ 
++#include <algorithm>
++#include <iterator>
++
+ namespace tensorrt_llm::batch_manager
+ {
+ using kv_cache_manager::VecUniqueTokens;
+@@ -109,6 +113,85 @@ bool beneficialToSkip(std::optional<kv_cache_manager::PrefixReuseSummary> const&
+     return false;
+ }
+ 
++bool moeKvAdmissionActive(kv_cache_manager::BaseKVCacheManager const& kvCacheManager, moe_kv_sched::Config const& config)
++{
++    if (!config.admissionEnabled)
++    {
++        return false;
++    }
++    auto const maxBlocks = kvCacheManager.getMaxNumBlocks();
++    auto const usedBlocks = kvCacheManager.getUsedNumBlocks();
++    auto const pressurePct = moe_kv_sched::kvPressurePct(usedBlocks, maxBlocks);
++    return pressurePct >= config.highWatermarkPct;
++}
++
++bool schedulableFirstContextRequest(std::shared_ptr<LlmRequest> const& req)
++{
++    return req->isContextInitState() && req->isFirstContextChunk() && !req->isDisaggGenerationInitState();
++}
++
++double requestCacheUtility(
++    std::shared_ptr<LlmRequest> const& req, kv_cache_manager::BaseKVCacheManager const& kvCacheManager,
++    moe_kv_sched::Config const& config)
++{
++    auto const hint = moe_kv_sched::unpackHint(req->getClientId());
++    if (!hint.has_value())
++    {
++        return 0.0;
++    }
++    return moe_kv_sched::cacheUtility(*hint, req->getPromptLen(), kvCacheManager.getTokensPerBlock(), config);
++}
++
++bool shouldDeferForMoeKvScheduling(std::shared_ptr<LlmRequest> const& req, RequestList::const_iterator nextIt,
++    RequestList::const_iterator endIt, kv_cache_manager::BaseKVCacheManager const& kvCacheManager,
++    moe_kv_sched::Config const& config)
++{
++    if (!moeKvAdmissionActive(kvCacheManager, config) || !schedulableFirstContextRequest(req))
++    {
++        return false;
++    }
++
++    auto const utility = requestCacheUtility(req, kvCacheManager, config);
++    if (utility >= config.minAdmitUtility)
++    {
++        return false;
++    }
++
++    for (auto it = nextIt; it != endIt; ++it)
++    {
++        auto const& laterReq = *it;
++        if (!schedulableFirstContextRequest(laterReq))
++        {
++            continue;
++        }
++        auto const laterUtility = requestCacheUtility(laterReq, kvCacheManager, config);
++        if (laterUtility >= config.minAdmitUtility && laterUtility > utility + config.deferMargin)
++        {
++            if (config.telemetryEnabled)
++            {
++                TLLM_LOG_INFO(
++                    "MoE KV admission defer request=%lu utility=%.2f for later_request=%lu later_utility=%.2f",
++                    req->mRequestId, utility, laterReq->mRequestId, laterUtility);
++            }
++            return true;
++        }
++    }
++    return false;
++}
++
++void sortPendingByMoeKvUtilityIfActive(
++    RequestVector& pendingRequests, kv_cache_manager::BaseKVCacheManager const& kvCacheManager,
++    moe_kv_sched::Config const& config)
++{
++    if (!moeKvAdmissionActive(kvCacheManager, config))
++    {
++        return;
++    }
++    std::stable_sort(pendingRequests.begin(), pendingRequests.end(),
++        [&kvCacheManager, &config](auto const& lhs, auto const& rhs)
++        { return requestCacheUtility(lhs, kvCacheManager, config) > requestCacheUtility(rhs, kvCacheManager, config); });
++}
++
+ } // namespace
+ 
+ MaxRequestsScheduler::MaxRequestsScheduler(
+@@ -270,6 +353,8 @@ std::tuple<RequestVector, RequestVector> GuaranteedNoEvictScheduler::impl(
+     {
+         // Now check if we can add pending requests
+         auto availablePeftPages = maxPeftCachePages - claimedPeftPages;
++        auto const moeKvConfig = moe_kv_sched::configFromEnv();
++        sortPendingByMoeKvUtilityIfActive(pendingRequests, kvCacheManager, moeKvConfig);
+ 
+         // Loop over pending requests and add them if they can be scheduled
+         // Start by trying to include disagg generation init requests
+@@ -382,6 +467,7 @@ std::tuple<RequestVector, RequestVector> MaxUtilizationScheduler::operator()(
+     // Keep track of blocks contributed by requests in context phase
+     auto [newlyContributedContextBlocks, newlyContributedCrossContextBlocks]
+         = prefillWithChunkedContextsAlreadyExecuting(activeRequests, kvCacheManager);
++    auto const moeKvConfig = moe_kv_sched::configFromEnv();
+ 
+     // Find last active in case we need to evict
+     auto startedReqLambda = [this](std::shared_ptr<LlmRequest> const& req)
+@@ -433,6 +519,12 @@ std::tuple<RequestVector, RequestVector> MaxUtilizationScheduler::operator()(
+             continue;
+         }
+ 
++        if (shouldDeferForMoeKvScheduling(req, std::next(reqIt), reqItEnd, kvCacheManager, moeKvConfig))
++        {
++            reqIt++;
++            continue;
++        }
++
+         bool const wasScheduled = trySchedulingRequestMaxUtilization(req, mMaxNumRequests, scheduledRequests,
+             scheduledBlocksManager, peftCacheManager, numScheduledPeftPages, seenTaskIds, summary);
+         if (wasScheduled)
+diff --git a/cpp/tensorrt_llm/batch_manager/kvCacheManager.cpp b/cpp/tensorrt_llm/batch_manager/kvCacheManager.cpp
+index b00cf24..c0e0dc9 100644
+--- a/cpp/tensorrt_llm/batch_manager/kvCacheManager.cpp
++++ b/cpp/tensorrt_llm/batch_manager/kvCacheManager.cpp
+@@ -20,6 +20,7 @@
+ #include "tensorrt_llm/batch_manager/common.h"
+ #include "tensorrt_llm/batch_manager/evictionPolicy.h"
+ #include "tensorrt_llm/batch_manager/kvCacheTransferManager.h"
++#include "tensorrt_llm/batch_manager/moeKvSchedulingPolicy.h"
+ #include "tensorrt_llm/batch_manager/radixBlockTree.h"
+ #include "tensorrt_llm/common/assert.h"
+ #include "tensorrt_llm/common/cudaUtils.h"
+@@ -35,6 +36,7 @@
+ #include "tensorrt_llm/runtime/worldConfig.h"
+ 
+ #include <algorithm>
++#include <chrono>
+ #include <limits>
+ #include <map>
+ #include <optional>
+@@ -54,6 +56,44 @@ using BlocksPerWindow = std::map<SizeType32, std::tuple<SizeType32, SizeType32>>
+ namespace
+ {
+ 
++std::optional<tle::KvCacheRetentionConfig> resolveMoeKvRetentionConfig(
++    tensorrt_llm::batch_manager::LlmRequest const& llmRequest, SizeType32 inputLength, SizeType32 tokensPerBlock)
++{
++    auto explicitConfig = llmRequest.getKvCacheRetentionConfig();
++    if (explicitConfig.has_value())
++    {
++        return explicitConfig;
++    }
++
++    auto const config = tensorrt_llm::batch_manager::moe_kv_sched::configFromEnv();
++    if (!config.retentionEnabled)
++    {
++        return std::nullopt;
++    }
++
++    auto const hint = tensorrt_llm::batch_manager::moe_kv_sched::unpackHint(llmRequest.getClientId());
++    if (!hint.has_value() || hint->sharedPrefixTokens <= 0)
++    {
++        return std::nullopt;
++    }
++
++    auto const utility = tensorrt_llm::batch_manager::moe_kv_sched::cacheUtility(
++        *hint, llmRequest.getPromptLen(), tokensPerBlock, config);
++    auto const priority = tensorrt_llm::batch_manager::moe_kv_sched::utilityToPriority(utility, config);
++    auto const tokenEnd = std::min<SizeType32>(inputLength, std::max<SizeType32>(tokensPerBlock, hint->sharedPrefixTokens));
++    std::vector<tle::KvCacheRetentionConfig::TokenRangeRetentionConfig> ranges;
++    ranges.emplace_back(0, tokenEnd, priority, std::chrono::milliseconds(config.durationMs));
++
++    if (config.telemetryEnabled)
++    {
++        TLLM_LOG_INFO("MoE KV retention request=%lu utility=%.2f tokenEnd=%d priority=%d", llmRequest.mRequestId,
++            utility, tokenEnd, priority);
++    }
++
++    return tle::KvCacheRetentionConfig(
++        ranges, config.decodePriority, std::chrono::milliseconds(config.durationMs));
++}
++
+ //! \brief Get all blocks in a sequence by traversing backwards from the last block.
+ //! \param lastBlock is a BlockPtr to the last block in the sequence to start traversal from
+ //! \return Vector of BlockPtr-s in sequence order
+@@ -1392,7 +1432,7 @@ WindowBlockManager::ClaimResult WindowBlockManager::claimMatchingBlocks(Generati
+         result.blockKeys = buildBlockKeys(blockedUniqueTokens, llmRequest);
+     }
+ 
+-    auto config = llmRequest.getKvCacheRetentionConfig();
++    auto config = resolveMoeKvRetentionConfig(llmRequest, inputLength, mTokensPerBlock);
+     result.perBlockRetentions = config.value_or(executor::KvCacheRetentionConfig())
+                                     .getPerBlockRetentionPriorityDuration(mTokensPerBlock, inputLength);
+     result.mode = config.value_or(executor::KvCacheRetentionConfig()).getTransferMode();
+
+diff --git a/cpp/include/tensorrt_llm/batch_manager/moeKvSchedulingPolicy.h b/cpp/include/tensorrt_llm/batch_manager/moeKvSchedulingPolicy.h
+new file mode 100644
+index 0000000..a179796
+--- /dev/null
++++ b/cpp/include/tensorrt_llm/batch_manager/moeKvSchedulingPolicy.h
+@@ -0,0 +173 @@
++/*
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#pragma once
++
++#include "tensorrt_llm/runtime/common.h"
++
++#include <algorithm>
++#include <cstdint>
++#include <cstdlib>
++#include <optional>
++
++namespace tensorrt_llm::batch_manager::moe_kv_sched
++{
++
++using tensorrt_llm::runtime::SizeType32;
++
++static constexpr std::uint64_t kPackedHintMagic = 0x4D2ULL;
++static constexpr int kPackedHintMagicShift = 52;
++static constexpr std::uint64_t kPackedHintMask = (1ULL << 10) - 1ULL;
++
++struct Hint
++{
++    SizeType32 pressure{0};
++    SizeType32 reuseGroup{0};
++    SizeType32 sharedPrefixTokens{0};
++    SizeType32 estimatedKvBlocks{0};
++    SizeType32 expectedReuseCount{0};
++    SizeType32 signalSource{0};
++};
++
++struct Config
++{
++    bool telemetryEnabled{false};
++    bool admissionEnabled{false};
++    bool retentionEnabled{false};
++    SizeType32 highWatermarkPct{75};
++    double weightReuse{1.0};
++    double weightRecompute{1.0};
++    double weightPressure{1.0};
++    double weightPollution{1.0};
++    double minAdmitUtility{40.0};
++    double deferMargin{20.0};
++    SizeType32 prefixPriorityBase{55};
++    SizeType32 prefixPriorityMax{95};
++    SizeType32 decodePriority{35};
++    SizeType32 durationMs{5000};
++};
++
++inline bool envFlag(char const* name)
++{
++    auto const* value = std::getenv(name);
++    if (value == nullptr)
++    {
++        return false;
++    }
++    return value[0] == '1' || value[0] == 'y' || value[0] == 'Y' || value[0] == 't' || value[0] == 'T';
++}
++
++inline SizeType32 envInt(char const* name, SizeType32 defaultValue)
++{
++    auto const* value = std::getenv(name);
++    if (value == nullptr)
++    {
++        return defaultValue;
++    }
++    char* end = nullptr;
++    auto parsed = std::strtol(value, &end, 10);
++    if (end == value)
++    {
++        return defaultValue;
++    }
++    return static_cast<SizeType32>(std::max<long>(0, parsed));
++}
++
++inline double envDouble(char const* name, double defaultValue)
++{
++    auto const* value = std::getenv(name);
++    if (value == nullptr)
++    {
++        return defaultValue;
++    }
++    char* end = nullptr;
++    auto parsed = std::strtod(value, &end);
++    if (end == value)
++    {
++        return defaultValue;
++    }
++    return parsed;
++}
++
++inline Config configFromEnv()
++{
++    Config config;
++    config.telemetryEnabled = envFlag("TRTLLM_MOE_KV_SCHED_TELEMETRY_ENABLE");
++    config.admissionEnabled = envFlag("TRTLLM_MOE_KV_ADMISSION_ENABLE");
++    config.retentionEnabled = envFlag("TRTLLM_MOE_KV_RETENTION_ENABLE");
++    config.highWatermarkPct = std::clamp(envInt("TRTLLM_MOE_KV_HIGH_WATERMARK_PCT", config.highWatermarkPct), 0, 100);
++    config.weightReuse = envDouble("TRTLLM_MOE_KV_WEIGHT_REUSE", config.weightReuse);
++    config.weightRecompute = envDouble("TRTLLM_MOE_KV_WEIGHT_RECOMPUTE", config.weightRecompute);
++    config.weightPressure = envDouble("TRTLLM_MOE_KV_WEIGHT_PRESSURE", config.weightPressure);
++    config.weightPollution = envDouble("TRTLLM_MOE_KV_WEIGHT_POLLUTION", config.weightPollution);
++    config.minAdmitUtility = envDouble("TRTLLM_MOE_KV_MIN_ADMIT_UTILITY", config.minAdmitUtility);
++    config.deferMargin = envDouble("TRTLLM_MOE_KV_DEFER_MARGIN", config.deferMargin);
++    config.prefixPriorityBase = std::clamp(envInt("TRTLLM_MOE_KV_PREFIX_PRIORITY_BASE", config.prefixPriorityBase), 0, 100);
++    config.prefixPriorityMax = std::clamp(envInt("TRTLLM_MOE_KV_PREFIX_PRIORITY_MAX", config.prefixPriorityMax), 0, 100);
++    config.decodePriority = std::clamp(envInt("TRTLLM_MOE_KV_DECODE_PRIORITY", config.decodePriority), 0, 100);
++    config.durationMs = envInt("TRTLLM_MOE_KV_DURATION_MS", config.durationMs);
++    return config;
++}
++
++inline std::uint64_t packHint(Hint const& hint)
++{
++    auto clamp10 = [](SizeType32 value) -> std::uint64_t { return static_cast<std::uint64_t>(std::clamp(value, 0, 1023)); };
++    return (kPackedHintMagic << kPackedHintMagicShift) | (clamp10(hint.pressure) << 42)
++        | (clamp10(hint.reuseGroup) << 32) | (clamp10(hint.sharedPrefixTokens) << 22)
++        | (clamp10(hint.estimatedKvBlocks) << 12) | (clamp10(hint.expectedReuseCount) << 2)
++        | clamp10(hint.signalSource & 0x3);
++}
++
++inline std::optional<Hint> unpackHint(std::optional<std::uint64_t> packed)
++{
++    if (!packed.has_value())
++    {
++        return std::nullopt;
++    }
++    auto const value = packed.value();
++    if ((value >> kPackedHintMagicShift) != kPackedHintMagic)
++    {
++        return std::nullopt;
++    }
++    Hint hint;
++    hint.pressure = static_cast<SizeType32>((value >> 42) & kPackedHintMask);
++    hint.reuseGroup = static_cast<SizeType32>((value >> 32) & kPackedHintMask);
++    hint.sharedPrefixTokens = static_cast<SizeType32>((value >> 22) & kPackedHintMask);
++    hint.estimatedKvBlocks = static_cast<SizeType32>((value >> 12) & kPackedHintMask);
++    hint.expectedReuseCount = static_cast<SizeType32>((value >> 2) & kPackedHintMask);
++    hint.signalSource = static_cast<SizeType32>(value & 0x3);
++    return hint;
++}
++
++inline SizeType32 kvPressurePct(SizeType32 usedBlocks, SizeType32 maxBlocks)
++{
++    if (maxBlocks <= 0)
++    {
++        return 0;
++    }
++    return std::clamp(static_cast<SizeType32>((static_cast<std::int64_t>(usedBlocks) * 100) / maxBlocks), 0, 100);
++}
++
++inline double cacheUtility(Hint const& hint, SizeType32 promptLen, SizeType32 tokensPerBlock, Config const& config)
++{
++    auto const safeTokensPerBlock = std::max<SizeType32>(1, tokensPerBlock);
++    auto const pressure = std::clamp(hint.pressure, 0, 1000) / 1000.0;
++    auto const prefixBlocks = static_cast<double>(hint.sharedPrefixTokens) / safeTokensPerBlock;
++    auto const estimatedBlocks
++        = static_cast<double>(std::max<SizeType32>(hint.estimatedKvBlocks, (promptLen + safeTokensPerBlock - 1) / safeTokensPerBlock));
++    auto const reuseValue = prefixBlocks * (1.0 + static_cast<double>(hint.expectedReuseCount)) * config.weightReuse;
++    auto const recomputeCost = (static_cast<double>(promptLen) / safeTokensPerBlock) * config.weightRecompute;
++    auto const pressureCost = pressure * (prefixBlocks + recomputeCost) * config.weightPressure;
++    auto const pollutionCost = std::max(0.0, estimatedBlocks - prefixBlocks) * config.weightPollution;
++    return reuseValue + recomputeCost + pressureCost - pollutionCost;
++}
++
++inline SizeType32 utilityToPriority(double utility, Config const& config)
++{
++    auto const clamped = std::clamp(utility, 0.0, 100.0);
++    auto const span = static_cast<double>(config.prefixPriorityMax - config.prefixPriorityBase);
++    return std::clamp(static_cast<SizeType32>(config.prefixPriorityBase + (clamped / 100.0) * span), 0, 100);
++}
++
++} // namespace tensorrt_llm::batch_manager::moe_kv_sched

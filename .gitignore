@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environments
+.env
+.venv/
+venv/
+
+# Build and runtime artifacts
+build/
+dist/
+artifacts/
+logs/
+*.engine
+*.plan
+*.cache
+*.onnx
+*.safetensors
+*.bin
+
+# TensorRT-LLM local checkouts and engines
+TensorRT-LLM/
+upstream/
+engine/
+engines/
+
+# Local benchmark scratch outputs
+results/**/telemetry/
+results/**/raw/
+results/**/tmp/
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
